@@ -158,7 +158,9 @@ async function selectRepo(id){
   try { history.replaceState(null,'', '?repo='+encodeURIComponent(id)); } catch {}
   document.querySelectorAll('.repolist li').forEach(li=>li.classList.toggle('active', li.dataset.id===id));
   const d = await api('/api/repo/'+encodeURIComponent(id));
-  state.detail=d; renderDetail();
+  state.detail=d;
+  try { const tg = await api('/api/repo/'+encodeURIComponent(id)+'/tags'); state.tags = tg.tags || []; } catch { state.tags = []; }
+  renderDetail();
 }
 function branchPills(b){
   let s='';
@@ -207,6 +209,7 @@ function renderDetail(){
     if(act==='del') btn.onclick=()=>delBranch(btn.dataset.b);
     if(act==='history') btn.onclick=()=>openReview(d.baseRef||d.current, true);
     if(act==='newbranch') btn.onclick=openBranchModal;
+    if(act==='tags') btn.onclick=openTags;
   });
 }
 async function openReview(branch, allHistory=false){
@@ -328,8 +331,60 @@ async function createBranch(){
   }catch(e){ $('#branchErr').textContent='创建失败：'+e.message; }
 }
 
+// ---- 标签管理 ----
+async function openTags(){
+  const d=state.detail; if(!d) return;
+  try { const tg = await api(`/api/repo/${d.id}/tags`); state.tags = tg.tags||[]; } catch { state.tags=[]; }
+  renderTags();
+  $('#tagDlg').showModal();
+}
+function renderTags(){
+  const d=state.detail;
+  const tags = state.tags||[];
+  const list = tags.length ? tags.map(t=>
+    `<div class="commit"><div class="subj">${esc(t.name)} <span class="muted mono">${esc(t.hash)}</span> <span class="muted">${esc(t.when||'')}</span></div><div class="meta">${esc(t.subject||'')} <button class="danger" style="margin-left:8px" data-deltag="${esc(t.name)}">删除</button></div></div>`
+  ).join('') : '<div class="empty">暂无标签</div>';
+  const refs = (d.branches||[]).map(b=>`<option value="${esc(b.name)}">${esc(b.name)}</option>`).join('');
+  $('#tagBody').innerHTML = `
+    <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px">
+      <div class="muted" style="font-size:12px">基于（留空=当前 HEAD）：</div>
+      <select id="tagRef" style="padding:6px 8px;background:var(--panel2);border:1px solid var(--border);border-radius:6px;color:var(--text)">${refs}<option value="">HEAD（当前）</option></select>
+      <input id="tagName" class="mono" style="padding:6px 8px;background:var(--panel2);border:1px solid var(--border);border-radius:6px;color:var(--text)" placeholder="标签名，如 v0.1" />
+      <input id="tagMsg" style="padding:6px 8px;background:var(--panel2);border:1px solid var(--border);border-radius:6px;color:var(--text)" placeholder="附注说明（可选，留空为轻量标签）" />
+      <div><button class="primary" id="tagCreate">创建标签</button> <span class="err" id="tagErr"></span></div>
+    </div>
+    <h3 style="color:var(--muted);font-size:13px;text-transform:uppercase;letter-spacing:.4px;margin:6px 0">已有标签</h3>
+    ${list}`;
+  $('#tagCreate').onclick=createTag;
+  $('#tagBody').querySelectorAll('button[data-deltag]').forEach(btn=>{ btn.onclick=()=>deleteTag(btn.dataset.deltag); });
+}
+async function createTag(){
+  const d=state.detail;
+  const name=$('#tagName').value.trim();
+  const ref=$('#tagRef').value;
+  const message=$('#tagMsg').value;
+  $('#tagErr').textContent='';
+  try{
+    await api(`/api/repo/${d.id}/tag`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,ref,message})});
+    toast(`已创建标签 ${name}`,'ok');
+    const tg=await api(`/api/repo/${d.id}/tags`); state.tags=tg.tags||[];
+    const d2=await api(`/api/repo/${d.id}`); state.detail=d2; renderDetail(); renderTags();
+  }catch(e){ $('#tagErr').textContent='创建失败：'+e.message; }
+}
+async function deleteTag(name){
+  if(!confirm(`确定删除标签 ${name}？`)) return;
+  const d=state.detail;
+  try{
+    await api(`/api/repo/${d.id}/tag/delete`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})});
+    toast(`已删除标签 ${name}`,'ok');
+    const tg=await api(`/api/repo/${d.id}/tags`); state.tags=tg.tags||[];
+    const d2=await api(`/api/repo/${d.id}`); state.detail=d2; renderDetail(); renderTags();
+  }catch(e){ toast('删除失败：'+e.message,'bad'); }
+}
+
 $('#branchClose').onclick=()=>$('#branchDlg').close();
 $('#branchCreate').onclick=createBranch;
+$('#tagClose').onclick=()=>$('#tagDlg').close();
 loadRepos().catch(e=>toast('加载失败：'+e.message,'bad'));
 </script>
 </body>

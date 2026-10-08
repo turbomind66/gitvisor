@@ -186,6 +186,27 @@ async function repoCreateBranch(repo, name, from, checkout) {
   return { ok: true, name, from: src, checkout: didCheckout };
 }
 
+async function repoTags(repo) {
+  const raw = await git(repo.path, ['tag', '--list', '--sort=-creatordate',
+    '--format=%(refname:short)%1f%(objectname:short)%1f%(creatordate:relative)%1f%(contents:subject)']);
+  return raw.split('\n').map(l => l.trim()).filter(Boolean).map(l => {
+    const [name, hash, when, subject] = l.split('\x1f');
+    return { name, hash, when, subject };
+  });
+}
+async function repoCreateTag(repo, name, ref, message) {
+  if (!name) throw new Error('标签名必填');
+  const BAD = [' ', '~', '^', ':', '?', '*', '\\', '[', ']', '/'];
+  if (BAD.some(c => name.includes(c))) throw new Error('标签名非法（不能含空格与 ~ ^ : ? * [ ] / 等字符）');
+  if (message && message.trim()) await git(repo.path, ['tag', '-a', name, ref || 'HEAD', '-m', message.trim()]);
+  else await git(repo.path, ['tag', name, ref || 'HEAD']);
+  return { ok: true, name };
+}
+async function repoDeleteTag(repo, name) {
+  await git(repo.path, ['tag', '-d', name]);
+  return { ok: true, name };
+}
+
 // 判断 maybe 是否是 of 的祖先（用于识别“已合并”）
 async function isAncestor(repoPath, maybe, of) {
   try { await git(repoPath, ['merge-base', '--is-ancestor', maybe, of]); return true; }
@@ -295,6 +316,19 @@ const server = http.createServer(async (req, res) => {
         const b = await readBody(req);
         if (!b.name) return send(res, 400, { error: 'name required' });
         return send(res, 200, await repoCreateBranch(r2, b.name, b.from, b.checkout));
+      }
+      if (sub === 'tags' && req.method === 'GET') {
+        return send(res, 200, { tags: await repoTags(r2) });
+      }
+      if (sub === 'tag' && req.method === 'POST') {
+        const b = await readBody(req);
+        if (!b.name) return send(res, 400, { error: 'name required' });
+        return send(res, 200, await repoCreateTag(r2, b.name, b.ref, b.message));
+      }
+      if (sub === 'tag/delete' && req.method === 'POST') {
+        const b = await readBody(req);
+        if (!b.name) return send(res, 400, { error: 'name required' });
+        return send(res, 200, await repoDeleteTag(r2, b.name));
       }
       return send(res, 404, { error: 'not found' });
     }
