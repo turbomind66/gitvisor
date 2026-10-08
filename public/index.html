@@ -96,7 +96,8 @@
 <dialog id="dlg">
   <div class="dlg-head">
     <strong id="dlgTitle">对比</strong>
-    <span class="grow"></span>
+    <span style="flex:1"></span>
+    <input id="searchInput" placeholder="搜索提交…" style="padding:5px 9px;background:var(--panel2);border:1px solid var(--border);border-radius:6px;color:var(--text);width:190px" />
     <button class="danger" id="revertMergeBtn" style="display:none">回退此合并</button>
     <button class="primary" id="mergeBtn">合并到目标分支</button>
     <button id="closeBtn">关闭</button>
@@ -131,7 +132,7 @@
 
 <script>
 const $ = s => document.querySelector(s);
-let state = { repos:[], current:null, detail:null, diffCtx:null };
+let state = { repos:[], current:null, detail:null, diffCtx:null, tags:[] }; let openArgs = null;
 
 function toast(msg, kind=''){ const t=$('#toast'); t.textContent=msg; t.className='toast show '+kind; setTimeout(()=>t.className='toast '+kind,2600); }
 async function api(url, opts){ const r=await fetch(url, opts); const j=await r.json().catch(()=>({})); if(!r.ok) throw new Error(j.error||('HTTP '+r.status)); return j; }
@@ -214,6 +215,7 @@ function renderDetail(){
 }
 async function openReview(branch, allHistory=false){
   const d=state.detail;
+  openArgs = { branch, allHistory };
   const base = d.baseRef;
   if(!base){ toast('没有主干分支可对比','bad'); return; }
   const bObj = d.branches.find(x=>x.name===branch);
@@ -242,7 +244,7 @@ async function openReview(branch, allHistory=false){
   $('#revertMergeBtn').disabled = false;
   const showRevertCommit = allHistory || isMerged;
   const commits = (data.commits||[]).map(c=>
-    `<div class="commit"><div class="subj">${esc(c.subject)}</div>
+    `<div class="commit"><div class="subj" style="cursor:pointer" data-commit="${esc(c.hash)}" title="查看此提交改动">${esc(c.subject)}</div>
     <div class="meta mono">${esc(c.short)} · ${esc(c.author)} · ${esc(c.when)} ${c.refs?('· '+esc(c.refs)):''}
       ${showRevertCommit?`<button class="danger" style="margin-left:8px" data-revert="${esc(c.hash)}">回退此提交</button>`:''}
     </div></div>`).join('');
@@ -252,8 +254,36 @@ async function openReview(branch, allHistory=false){
     <div>${commits}</div>
     ${data.diff?`<div class="diffbox">${renderDiff(data.diff)}</div>`:''}`;
   $('#dlg').showModal();
+  $('#searchInput').style.display='';
+  $('#searchInput').value='';
   $('#dlgBody').querySelectorAll('button[data-revert]').forEach(btn=>{ btn.onclick=()=>revertCommit(btn.dataset.revert); });
+  $('#dlgBody').querySelectorAll('div[data-commit]').forEach(el=>{ el.onclick=()=>openCommit(el.dataset.commit); });
+  $('#searchInput').oninput=(e)=>{ const q=e.target.value.trim().toLowerCase(); document.querySelectorAll('#dlgBody .commit').forEach(c=>{ c.style.display=(!q||c.textContent.toLowerCase().includes(q))?'':'none'; }); };
 }
+async function openCommit(hash){
+  const d=state.detail;
+  let c;
+  try { c = await api(`/api/repo/${d.id}/commit?hash=${encodeURIComponent(hash)}`); }
+  catch(e){ toast('加载提交失败：'+e.message,'bad'); return; }
+  $('#dlgTitle').innerHTML = `提交详情：<span class="mono">${esc(c.short)}</span>`;
+  $('#mergeBtn').style.display='none';
+  $('#revertMergeBtn').style.display='none';
+  $('#searchInput').style.display='none';
+  $('#dlgBody').innerHTML = `
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+      <button id="backBtn">← 返回</button>
+      <span style="flex:1"></span>
+      <button class="danger" data-revert="${esc(c.hash)}">回退此提交</button>
+    </div>
+    <div class="stat mono">${esc(c.author)} · ${esc(c.when)} ${c.refs?('· '+esc(c.refs)):''}</div>
+    <div class="stat mono">${esc(c.stat)}</div>
+    <div class="commit"><div class="subj">${esc(c.subject)}</div></div>
+    <div class="diffbox">${renderDiff(c.diff)}</div>`;
+  $('#dlg').showModal();
+  $('#backBtn').onclick=()=>openReview(openArgs.branch, openArgs.allHistory);
+  $('#dlgBody').querySelector('button[data-revert]').onclick=()=>revertCommit(c.hash);
+}
+
 function renderDiff(text){
   return text.split('\n').map(l=>{
     let cls='d-line';
@@ -289,7 +319,7 @@ async function revertMerge(){
 }
 async function revertCommit(hash){
   const d=state.detail; const ctx=state.diffCtx;
-  const target = ctx.base || d.baseRef;
+  const target = (ctx && ctx.base) || d.baseRef;
   if(!confirm(`确定回退提交 ${hash.slice(0,7)}？将生成一个反向提交（历史不丢失）。`)) return;
   try{
     await api(`/api/repo/${d.id}/revert-commit`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({commit:hash,target})});

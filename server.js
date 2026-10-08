@@ -118,9 +118,12 @@ async function repoDetail(repo) {
   return { id: repo.id, name: repo.name, path: repo.path, bare, current, baseRef, dirty, branches };
 }
 
-async function repoLog(repo, ref, limit = 100) {
+async function repoLog(repo, ref, limit = 100, grep = '') {
   const fmt = '%H%x1f%h%x1f%an%x1f%cr%x1f%D%x1f%s%x1e';
-  const out = await git(repo.path, ['log', `--max-count=${limit}`, `--pretty=format:${fmt}`, ref]);
+  const args = ['log', `--max-count=${limit}`, `--pretty=format:${fmt}`];
+  if (grep) args.push(`--grep=${grep}`, '-i', '-F');
+  args.push(ref);
+  const out = await git(repo.path, args);
   return out.split('\x1e').map(s => s.trim()).filter(Boolean).map(chunk => {
     const [hash, h, author, when, refs, subject] = chunk.split('\x1f');
     return { hash, short: h, author, when, refs, subject };
@@ -207,6 +210,14 @@ async function repoDeleteTag(repo, name) {
   return { ok: true, name };
 }
 
+async function repoCommitDiff(repo, hash) {
+  const stat = (await git(repo.path, ['show', '--no-patch', '--stat', '--no-color', hash])).trim();
+  const diff = await git(repo.path, ['show', '--no-color', '-U3', hash]);
+  const line = (await git(repo.path, ['log', '-1', '--pretty=%H%x1f%h%x1f%an%x1f%cr%x1f%D%x1f%s', hash])).trim();
+  const [H, h, author, when, refs, subject] = line.split('\x1f');
+  return { hash: H, short: h, author, when, refs, subject, stat, diff };
+}
+
 // 判断 maybe 是否是 of 的祖先（用于识别“已合并”）
 async function isAncestor(repoPath, maybe, of) {
   try { await git(repoPath, ['merge-base', '--is-ancestor', maybe, of]); return true; }
@@ -285,7 +296,8 @@ const server = http.createServer(async (req, res) => {
       if (!sub && req.method === 'GET') return send(res, 200, await repoDetail(r2));
       if (sub === 'log' && req.method === 'GET') {
         const ref = u.searchParams.get('ref'); const limit = Number(u.searchParams.get('limit') || 100);
-        return send(res, 200, { commits: await repoLog(r2, ref, limit) });
+        const grep = u.searchParams.get('grep') || '';
+        return send(res, 200, { commits: await repoLog(r2, ref, limit, grep) });
       }
       if (sub === 'diff' && req.method === 'GET') {
         const base = u.searchParams.get('base'); const head = u.searchParams.get('head');
@@ -329,6 +341,11 @@ const server = http.createServer(async (req, res) => {
         const b = await readBody(req);
         if (!b.name) return send(res, 400, { error: 'name required' });
         return send(res, 200, await repoDeleteTag(r2, b.name));
+      }
+      if (sub === 'commit' && req.method === 'GET') {
+        const hash = u.searchParams.get('hash');
+        if (!hash) return send(res, 400, { error: 'hash required' });
+        return send(res, 200, await repoCommitDiff(r2, hash));
       }
       return send(res, 404, { error: 'not found' });
     }
