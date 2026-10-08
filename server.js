@@ -274,6 +274,44 @@ async function repoExport(repo, mode, base, head, hash, twoDot) {
   }
   return await git(repo.path, ['diff', '--no-color', `${base}${sep}${head}`]);
 }
+async function repoStash(repo, action, opts = {}) {
+  if (await isBareRepo(repo.path)) throw new Error('裸仓库不支持暂存（没有工作区）');
+  const ref = opts.ref || 'stash@{0}';
+  if (action === 'list') {
+    const out = (await git(repo.path, ['stash', 'list'])).trim();
+    return { items: out.split('\n').filter(Boolean).map(line => {
+      const m = line.match(/^stash@\{(\d+)\}:\s*On\s+(\S+):\s*(.*)$/);
+      if (m) return { ref: `stash@{${m[1]}}`, index: Number(m[1]), branch: m[2], message: m[3] };
+      return { raw: line };
+    }) };
+  }
+  if (action === 'show') {
+    let diff = (await git(repo.path, ['stash', 'show', '-p', ref])).trim();
+    // 若用 -u 暂存了未跟踪文件，差异保存在 ^3（第三个父提交），需单独取
+    try {
+      await git(repo.path, ['rev-parse', `${ref}^3`]);
+      const ut = (await git(repo.path, ['show', '--no-color', `${ref}^3`])).trim();
+      if (ut) diff = (diff ? diff + '\n' : '') + ut;
+    } catch {}
+    return { diff };
+  }
+  if (action === 'save') {
+    const args = ['stash', 'push'];
+    if (opts.untracked) args.push('-u');
+    if (opts.message) args.push('-m', opts.message);
+    const out = (await git(repo.path, args)).trim();
+    return { ok: true, out };
+  }
+  if (action === 'pop' || action === 'apply' || action === 'drop') {
+    const out = (await git(repo.path, ['stash', action, ref])).trim();
+    return { ok: true, out };
+  }
+  if (action === 'clear') {
+    await git(repo.path, ['stash', 'clear']);
+    return { ok: true };
+  }
+  throw new Error('unknown action: ' + action);
+}
 async function repoCherryPick(repo, target, hash) {
   if (!target) throw new Error('目标分支必填');
   if (!hash) throw new Error('提交必填');
@@ -452,6 +490,16 @@ const server = http.createServer(async (req, res) => {
         else if (!base || !head) return send(res, 400, { error: 'base/head required' });
         const text = await repoExport(r2, mode, base, head, hash, twoDot);
         return send(res, 200, text, 'text/plain; charset=utf-8');
+      }
+      if (sub === 'stash' && req.method === 'GET') {
+        const q = u.searchParams.get('q') || 'list';
+        if (q === 'show') return send(res, 200, await repoStash(r2, 'show', { ref: u.searchParams.get('ref') }));
+        return send(res, 200, await repoStash(r2, 'list'));
+      }
+      if (sub === 'stash' && req.method === 'POST') {
+        const b = await readBody(req);
+        if (!b.action) return send(res, 400, { error: 'action required' });
+        return send(res, 200, await repoStash(r2, b.action, { ref: b.ref, message: b.message, untracked: !!b.untracked }));
       }
       if (sub === 'cherry-pick' && req.method === 'POST') {
         const b = await readBody(req);

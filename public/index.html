@@ -241,6 +241,7 @@ function renderDetail(){
       <button data-act="compare">对比</button>
       <button data-act="history">全部提交</button>
       <button data-act="graph">网络</button>
+      <button data-act="stash">暂存</button>
     </div>
     <div class="repometa mono">${esc(d.path)}</div>
     <table>
@@ -256,6 +257,7 @@ function renderDetail(){
     if(act==='newbranch') btn.onclick=openBranchModal;
     if(act==='tags') btn.onclick=openTags;
     if(act==='graph') btn.onclick=()=>openGraph(d.id);
+    if(act==='stash') btn.onclick=()=>openStash();
   });
 }
 function downloadText(filename, text){
@@ -272,6 +274,47 @@ async function exportPatch(mode){
   const text = await (await fetch(u)).text();
   const fn = mode === 'diff' ? `${(ctx.head||'export').slice(0,12)}.diff` : `${(ctx.head||'export').slice(0,12)}.patch`;
   downloadText(fn, text);
+}
+async function openStash(){
+  const d = state.detail; if(!d) return;
+  const box = $('#stashBody'); box.innerHTML='<div class="muted">加载中…</div>';
+  const cb = $('#stashClose'); if (cb) cb.onclick = () => $('#stashDlg').close();
+  const { items } = await api(`/api/repo/${d.id}/stash`);
+  let html = `<div class="bar">
+    <input id="stashMsg" placeholder="暂存说明（可选）" style="padding:5px 9px;background:var(--panel2);border:1px solid var(--border);border-radius:6px;color:var(--text);width:220px"/>
+    <label style="color:var(--muted);font-size:13px"><input type="checkbox" id="stashUntracked"/> 含未跟踪</label>
+    <button class="primary" data-stash="save">暂存当前改动</button>
+    <button data-stash="clear">清空全部</button>
+    <span class="grow"></span>
+  </div>`;
+  if (!items.length) html += '<div class="empty" style="padding:18px">没有暂存记录</div>';
+  else html += '<table><thead><tr><th>引用</th><th>分支</th><th>说明</th><th></th></tr></thead><tbody>' + items.map(it=>`
+    <tr>
+      <td class="mono">${esc(it.ref)}</td>
+      <td>${esc(it.branch||'')}</td>
+      <td>${esc(it.message||'')}</td>
+      <td style="white-space:nowrap">
+        <button data-stash="show" data-ref="${esc(it.ref)}">查看</button>
+        <button class="primary" data-stash="pop" data-ref="${esc(it.ref)}">弹出</button>
+        <button data-stash="apply" data-ref="${esc(it.ref)}">应用</button>
+        <button class="danger" data-stash="drop" data-ref="${esc(it.ref)}">删除</button>
+      </td>
+    </tr>`).join('') + '</tbody></table>';
+  box.innerHTML = html;
+  box.querySelectorAll('[data-stash]').forEach(b=>{
+    const a = b.dataset.stash;
+    if (a==='save') b.onclick = async () => { await api(`/api/repo/${d.id}/stash`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'save',message:($('#stashMsg').value||'').trim(),untracked:$('#stashUntracked').checked})}); await openStash(); };
+    else if (a==='clear') b.onclick = async () => { if(confirm('确认清空全部暂存？')){ await api(`/api/repo/${d.id}/stash`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'clear'})}); await openStash(); } };
+    else if (a==='show') b.onclick = () => showStash(d.id, b.dataset.ref);
+    else b.onclick = async () => { if(confirm('确认'+a+' '+b.dataset.ref+'？')){ await api(`/api/repo/${d.id}/stash`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:a,ref:b.dataset.ref})}); await openStash(); } };
+  });
+  $('#stashDlg').showModal();
+}
+async function showStash(id, ref){
+  const { diff } = await api(`/api/repo/${id}/stash?q=show&ref=${encodeURIComponent(ref)}`);
+  const box = $('#stashBody');
+  box.innerHTML = `<div class="bar"><button id="stashBack">返回</button><span class="muted">暂存差异 ${esc(ref)}</span></div><div class="diffbox">${renderDiff(diff)}</div>`;
+  const back = $('#stashBack'); if (back) back.onclick = openStash;
 }
 async function openReview(base, head, opts = {}){
   const d=state.detail;
@@ -623,6 +666,13 @@ async function doCherry(){
     <button class="x" onclick="document.getElementById('graphDlg').close()">×</button>
   </div>
   <div class="graphwrap"><div id="graphBox"></div></div>
+</dialog>
+<dialog id="stashDlg">
+  <div class="dlg-head">
+    <strong>暂存区 Stash</strong><span class="grow"></span>
+    <button id="stashClose">关闭</button>
+  </div>
+  <div class="dlg-body" id="stashBody"></div>
 </dialog>
 </body>
 </html>
