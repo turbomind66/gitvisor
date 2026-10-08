@@ -149,6 +149,25 @@ async function repoDiff(repo, base, head, opts = {}) {
   return { base, head, stat, diff, commits, merged };
 }
 
+async function repoFiles(repo, base, head, opts = {}) {
+  const sep = opts.twoDot ? '..' : '...';
+  const out = await git(repo.path, ['diff', '--name-status', '--no-color', `${base}${sep}${head}`]);
+  const files = [];
+  for (const line of out.split('\n')) {
+    if (!line.trim()) continue;
+    const parts = line.split('\t');
+    const status = parts[0];
+    const path = parts[parts.length - 1];
+    files.push({ status, path });
+  }
+  return files;
+}
+
+async function repoFileDiff(repo, base, head, file, opts = {}) {
+  const sep = opts.twoDot ? '..' : '...';
+  return (await git(repo.path, ['diff', '--no-color', '-U3', `${base}${sep}${head}`, '--', file])).trim();
+}
+
 async function repoMerge(repo, source, target) {
   if (await isBareRepo(repo.path)) throw new Error('裸仓库不支持合并（没有工作区）。请对普通仓库操作。');
   if (source === target) throw new Error('源分支和目标分支相同');
@@ -330,6 +349,18 @@ const server = http.createServer(async (req, res) => {
         const twoDot = u.searchParams.get('twoDot') === '1';
         if (!base || !head) return send(res, 400, { error: 'base/head required' });
         return send(res, 200, await repoDiff(r2, base, head, { merged, twoDot }));
+      }
+      if (sub === 'files' && req.method === 'GET') {
+        const base = u.searchParams.get('base'); const head = u.searchParams.get('head');
+        const twoDot = u.searchParams.get('twoDot') === '1';
+        if (!base || !head) return send(res, 400, { error: 'base/head required' });
+        return send(res, 200, { files: await repoFiles(r2, base, head, { twoDot }) });
+      }
+      if (sub === 'filediff' && req.method === 'GET') {
+        const base = u.searchParams.get('base'); const head = u.searchParams.get('head');
+        const file = u.searchParams.get('file'); const twoDot = u.searchParams.get('twoDot') === '1';
+        if (!base || !head || !file) return send(res, 400, { error: 'base/head/file required' });
+        return send(res, 200, { file, diff: await repoFileDiff(r2, base, head, file, { twoDot }) });
       }
       if (sub === 'merge' && req.method === 'POST') {
         const b = await readBody(req);

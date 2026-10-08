@@ -71,6 +71,21 @@
   .toast.show{opacity:1}
   .toast.ok{border-color:#3fb95066}
   .toast.bad{border-color:#f8514966}
+  .subtabs{display:flex;gap:6px;margin:8px 0 6px}
+  .subtabs button{padding:5px 12px;background:transparent;border:1px solid var(--border);border-radius:6px;color:var(--muted);cursor:pointer;font-size:12px}
+  .subtabs button.active{background:var(--panel2);color:var(--text);border-color:#58a6ff66}
+  .filelist{border:1px solid var(--border);border-radius:6px;overflow:hidden;margin:6px 0;max-height:280px;overflow-y:auto}
+  .filerow{display:flex;align-items:center;gap:10px;padding:6px 10px;cursor:pointer;font-size:12px;border-bottom:1px solid var(--border)}
+  .filerow:last-child{border-bottom:none}
+  .filerow:hover{background:var(--panel2)}
+  .filerow.selected{background:#1f6feb22;border-left:3px solid var(--blue)}
+  .fst{font-family:var(--mono);font-size:10px;font-weight:600;padding:2px 6px;border-radius:3px;min-width:26px;text-align:center;flex-shrink:0}
+  .fst-A{background:#3fb95033;color:#3fb950}
+  .fst-M{background:#d2992233;color:#d29922}
+  .fst-D{background:#f8514933;color:#f85149}
+  .fst-R{background:#a371f733;color:#a371f7}
+  .fst-C{background:#58a6ff33;color:#58a6ff}
+  .filediff{margin-top:6px}
 </style>
 </head>
 <body>
@@ -242,7 +257,7 @@ async function openReview(base, head, opts = {}){
   } else {
     const q = `base=${encodeURIComponent(base)}&head=${encodeURIComponent(head)}${compare?'&twoDot=1':''}`;
     data = await api(`/api/repo/${d.id}/diff?${q}`);
-    ctx = {base, head, merged:false, compare};
+    ctx = {base, head, merged:false, compare, twoDot: compare};
   }
   state.diffCtx = ctx;
   $('#dlgTitle').innerHTML = isMerged
@@ -262,11 +277,20 @@ async function openReview(base, head, opts = {}){
     <div class="meta mono">${esc(c.short)} · ${esc(c.author)} · ${esc(c.when)} ${c.refs?('· '+esc(c.refs)):''}
       ${showRevertCommit?`<button class="danger" style="margin-left:8px" data-revert="${esc(c.hash)}">回退此提交</button>`:''}
     </div></div>`).join('');
-  $('#dlgBody').innerHTML = `
-    ${isMerged?'<div class="stat">该分支已合并进主干，下方为其引入的改动。可“回退此合并”撤销。</div>':''}
-    ${data.stat?`<div class="stat mono">${esc(data.stat)}</div>`:(data.diff?'':'<div class="stat">（无差异）</div>')}
-    <div>${commits}</div>
-    ${data.diff?`<div class="diffbox">${renderDiff(data.diff)}</div>`:''}`;
+  const enableFiles = !allHistory && !isMerged && !!data.diff;
+  const subtabsHtml = enableFiles ? `<div class="subtabs"><button class="active" data-subtab="commits">提交 (${(data.commits||[]).length})</button><button data-subtab="files">文件</button></div>` : '';
+  const commitsPaneHtml = `<div data-pane="commits">${isMerged?'<div class="stat">该分支已合并进主干，下方为其引入的改动。可“回退此合并”撤销。':''}${data.stat?`<div class="stat mono">${esc(data.stat)}</div>`:(data.diff?'':'<div class="stat">（无差异）</div>')}<div>${commits}</div>${data.diff?`<div class="diffbox">${renderDiff(data.diff)}</div>`:''}</div>`;
+  const filesPaneHtml = enableFiles ? `<div data-pane="files" style="display:none"><div class="muted">点击上方「文件」加载变更列表…</div></div>` : '';
+  $('#dlgBody').innerHTML = subtabsHtml + commitsPaneHtml + filesPaneHtml;
+  if(enableFiles){
+    $('#dlgBody').querySelectorAll('button[data-subtab]').forEach(b=>{
+      b.onclick=()=>{
+        $('#dlgBody').querySelectorAll('button[data-subtab]').forEach(x=>x.classList.toggle('active', x===b));
+        $('#dlgBody').querySelectorAll('[data-pane]').forEach(p=>p.style.display=p.dataset.pane===b.dataset.subtab?'':'none');
+        if(b.dataset.subtab==='files' && !$('#dlgBody').dataset.filesLoaded){ loadDiffFiles(); }
+      };
+    });
+  }
   $('#dlg').showModal();
   $('#searchInput').style.display='';
   $('#searchInput').value='';
@@ -296,6 +320,33 @@ async function openCompare(){
     openReview(a, b, {compare:true});
   };
   $('#compareDlg').showModal();
+}
+async function loadDiffFiles(){
+  const d=state.detail, ctx=state.diffCtx;
+  const pane = $('#dlgBody').querySelector('[data-pane="files"]');
+  pane.innerHTML='<div class="muted">加载中…</div>';
+  try{
+    const r = await api(`/api/repo/${d.id}/files?base=${encodeURIComponent(ctx.base)}&head=${encodeURIComponent(ctx.head)}&twoDot=${ctx.twoDot?1:0}`);
+    if(!r.files.length){ pane.innerHTML='<div class="muted">无文件变化</div>'; $('#dlgBody').dataset.filesLoaded='1'; return; }
+    pane.innerHTML = `<div class="filelist">${r.files.map((f,i)=>`<div class="filerow" data-i="${i}" data-file="${esc(f.path)}"><span class="fst fst-${esc((f.status||'?')[0])}">${esc(f.status)}</span><span class="mono">${esc(f.path)}</span></div>`).join('')}</div><div class="filediff" id="fileDiffBox"><div class="muted">选择左侧文件查看差异</div></div>`;
+    pane.querySelectorAll('.filerow').forEach(row=>{
+      row.onclick=()=>{
+        pane.querySelectorAll('.filerow').forEach(x=>x.classList.toggle('selected', x===row));
+        loadFileDiff(row.dataset.file);
+      };
+    });
+    pane.querySelector('.filerow').click();
+    $('#dlgBody').dataset.filesLoaded='1';
+  }catch(e){ pane.innerHTML='<div class="err">加载失败：'+esc(e.message)+'</div>'; }
+}
+async function loadFileDiff(file){
+  const box = $('#fileDiffBox'); if(!box) return;
+  box.innerHTML='<div class="muted">加载中…</div>';
+  const d=state.detail, ctx=state.diffCtx;
+  try{
+    const r = await api(`/api/repo/${d.id}/filediff?base=${encodeURIComponent(ctx.base)}&head=${encodeURIComponent(ctx.head)}&file=${encodeURIComponent(file)}&twoDot=${ctx.twoDot?1:0}`);
+    box.innerHTML = r.diff ? `<div class="diffbox">${renderDiff(r.diff)}</div>` : '<div class="muted">该文件无差异</div>';
+  }catch(e){ box.innerHTML='<div class="err">加载失败：'+esc(e.message)+'</div>'; }
 }
 async function openCommit(hash){
   const d=state.detail;
