@@ -133,6 +133,11 @@
   <div class="dlg-body" id="cherryBody"></div>
 </dialog>
 
+<dialog id="compareDlg">
+  <div class="dlg-head"><strong>对比两个引用</strong><span style="flex:1"></span><button id="compareClose">关闭</button></div>
+  <div class="dlg-body" id="compareBody"></div>
+</dialog>
+
 <div class="toast" id="toast"></div>
 
 <script>
@@ -202,6 +207,7 @@ function renderDetail(){
       <span class="grow"></span>
       <button data-act="newbranch">新建分支</button>
       <button data-act="tags">标签</button>
+      <button data-act="compare">对比</button>
       <button data-act="history">全部提交</button>
     </div>
     <div class="repometa mono">${esc(d.path)}</div>
@@ -211,40 +217,43 @@ function renderDetail(){
     </table>`;
   $('#detail').querySelectorAll('button[data-act]').forEach(btn=>{
     const act=btn.dataset.act;
-    if(act==='review') btn.onclick=()=>openReview(btn.dataset.b);
+    if(act==='review') btn.onclick=()=>openReview(d.baseRef, btn.dataset.b);
     if(act==='del') btn.onclick=()=>delBranch(btn.dataset.b);
-    if(act==='history') btn.onclick=()=>openReview(d.baseRef||d.current, true);
+    if(act==='history') btn.onclick=()=>openReview(d.baseRef||d.current, d.baseRef||d.current, {allHistory:true});
+    if(act==='compare') btn.onclick=openCompare;
     if(act==='newbranch') btn.onclick=openBranchModal;
     if(act==='tags') btn.onclick=openTags;
   });
 }
-async function openReview(branch, allHistory=false){
+async function openReview(base, head, opts = {}){
   const d=state.detail;
-  openArgs = { branch, allHistory };
-  const base = d.baseRef;
-  if(!base){ toast('没有主干分支可对比','bad'); return; }
-  const bObj = d.branches.find(x=>x.name===branch);
-  const isMerged = !allHistory && bObj && bObj.merged;
+  openArgs = { base, head, opts };
+  const allHistory = !!opts.allHistory;
+  const isMerged = !!opts.merged;
+  const compare = !!opts.compare;
   let data, ctx;
   if(isMerged){
-    data = await api(`/api/repo/${d.id}/diff?base=${encodeURIComponent(base)}&head=${encodeURIComponent(bObj.mergeCommit)}&merged=1`);
-    ctx = {base, head:branch, merged:true, mergeCommit:bObj.mergeCommit};
-  } else if(branch===base || allHistory){
-    const commits = (await api(`/api/repo/${d.id}/log?ref=${encodeURIComponent(base)}`)).commits;
-    data = {base, head:base, stat:'', diff:'', commits};
-    ctx = {base, head:base, merged:false, allHistory:true};
+    data = await api(`/api/repo/${d.id}/diff?base=${encodeURIComponent(base)}&head=${encodeURIComponent(opts.mergeCommit)}&merged=1`);
+    ctx = {base, head, merged:true, mergeCommit:opts.mergeCommit};
+  } else if(allHistory || base===head){
+    const commits = (await api(`/api/repo/${d.id}/log?ref=${encodeURIComponent(head)}`)).commits;
+    data = {base, head, stat:'', diff:'', commits};
+    ctx = {base, head, merged:false, allHistory:true};
   } else {
-    data = await api(`/api/repo/${d.id}/diff?base=${encodeURIComponent(base)}&head=${encodeURIComponent(branch)}`);
-    ctx = {base, head:branch, merged:false};
+    const q = `base=${encodeURIComponent(base)}&head=${encodeURIComponent(head)}${compare?'&twoDot=1':''}`;
+    data = await api(`/api/repo/${d.id}/diff?${q}`);
+    ctx = {base, head, merged:false, compare};
   }
   state.diffCtx = ctx;
   $('#dlgTitle').innerHTML = isMerged
-    ? `已合并：<span class="mono">${esc(branch)}</span> → <span class="mono">${esc(base)}</span>`
-    : (allHistory ? `提交历史：<span class="mono">${esc(base)}</span>`
-       : `审查：<span class="mono">${esc(base)}</span> ← <span class="mono">${esc(branch)}</span>`);
-  $('#mergeBtn').style.display = (isMerged || allHistory) ? 'none' : '';
+    ? `已合并：<span class="mono">${esc(head)}</span> → <span class="mono">${esc(base)}</span>`
+    : (allHistory ? `提交历史：<span class="mono">${esc(head)}</span>`
+       : (compare ? `对比：<span class="mono">${esc(base)}</span> … <span class="mono">${esc(head)}</span>`
+          : `审查：<span class="mono">${esc(base)}</span> ← <span class="mono">${esc(head)}</span>`));
+  const showMerge = !isMerged && !allHistory && !compare;
+  $('#mergeBtn').style.display = showMerge ? '' : 'none';
   $('#mergeBtn').disabled = false;
-  $('#mergeBtn').textContent = `合并 ${branch} → ${base}`;
+  $('#mergeBtn').textContent = `合并 ${head} → ${base}`;
   $('#revertMergeBtn').style.display = isMerged ? '' : 'none';
   $('#revertMergeBtn').disabled = false;
   const showRevertCommit = allHistory || isMerged;
@@ -264,6 +273,29 @@ async function openReview(branch, allHistory=false){
   $('#dlgBody').querySelectorAll('button[data-revert]').forEach(btn=>{ btn.onclick=()=>revertCommit(btn.dataset.revert); });
   $('#dlgBody').querySelectorAll('div[data-commit]').forEach(el=>{ el.onclick=()=>openCommit(el.dataset.commit); });
   $('#searchInput').oninput=(e)=>{ const q=e.target.value.trim().toLowerCase(); document.querySelectorAll('#dlgBody .commit').forEach(c=>{ c.style.display=(!q||c.textContent.toLowerCase().includes(q))?'':'none'; }); };
+}
+async function openCompare(){
+  const d=state.detail; if(!d) return;
+  const refs = (d.branches||[]).map(b=>`<option value="${esc(b.name)}">${esc(b.name)}${b.current?'（当前）':''}</option>`).join('');
+  const tags = (state.tags||[]).map(t=>`<option value="${esc(t.name)}">${esc(t.name)}（标签）</option>`).join('');
+  const baseVal = d.baseRef || (d.branches[0]&&d.branches[0].name) || '';
+  const other = (d.branches.find(b=>!b.base)||{}).name || baseVal;
+  $('#compareBody').innerHTML = `
+    <p class="muted">选择两个引用（分支或标签），查看它们之间的直接差异（base..head 两点 diff）：</p>
+    <div style="display:flex;gap:8px;align-items:center;margin:8px 0">
+      <select id="cmpA" style="padding:6px 8px;background:var(--panel2);border:1px solid var(--border);border-radius:6px;color:var(--text)">${refs}${tags}</select>
+      <span class="muted">…</span>
+      <select id="cmpB" style="padding:6px 8px;background:var(--panel2);border:1px solid var(--border);border-radius:6px;color:var(--text)">${refs}${tags}</select>
+    </div>
+    <div><button class="primary" id="cmpGo">查看差异</button> <span class="err" id="cmpErr"></span></div>`;
+  $('#cmpA').value = baseVal; $('#cmpB').value = other;
+  $('#cmpGo').onclick = () => {
+    const a=$('#cmpA').value, b=$('#cmpB').value;
+    if(!a||!b){ $('#cmpErr').textContent='请选择两个引用'; return; }
+    $('#compareDlg').close();
+    openReview(a, b, {compare:true});
+  };
+  $('#compareDlg').showModal();
 }
 async function openCommit(hash){
   const d=state.detail;
@@ -286,7 +318,7 @@ async function openCommit(hash){
     <div class="commit"><div class="subj">${esc(c.subject)}</div></div>
     <div class="diffbox">${renderDiff(c.diff)}</div>`;
   $('#dlg').showModal();
-  $('#backBtn').onclick=()=>openReview(openArgs.branch, openArgs.allHistory);
+  $('#backBtn').onclick=()=>openReview(openArgs.base, openArgs.head, openArgs.opts);
   $('#dlgBody').querySelector('button[data-revert]').onclick=()=>revertCommit(c.hash);
   $('#dlgBody').querySelector('button[data-cherry]').onclick=()=>openCherry(c.hash);
 }
@@ -423,6 +455,7 @@ $('#branchClose').onclick=()=>$('#branchDlg').close();
 $('#branchCreate').onclick=createBranch;
 $('#tagClose').onclick=()=>$('#tagDlg').close();
 $('#cherryClose').onclick=()=>$('#cherryDlg').close();
+$('#compareClose').onclick=()=>$('#compareDlg').close();
 loadRepos().catch(e=>toast('加载失败：'+e.message,'bad'));
 
 // ---- 挑选提交（cherry-pick） ----

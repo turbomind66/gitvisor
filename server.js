@@ -141,8 +141,9 @@ async function repoDiff(repo, base, head, opts = {}) {
     const [hash, h, author, when, refs, subject] = line.split('\x1f');
     commits = [{ hash, short: h, author, when, refs, subject }];
   } else {
-    stat = (await git(repo.path, ['diff', '--stat', '--no-color', `${base}...${head}`])).trim();
-    diff = await git(repo.path, ['diff', '--no-color', '-U3', `${base}...${head}`]);
+    const sep = opts.twoDot ? '..' : '...';
+    stat = (await git(repo.path, ['diff', '--stat', '--no-color', `${base}${sep}${head}`])).trim();
+    diff = await git(repo.path, ['diff', '--no-color', '-U3', `${base}${sep}${head}`]);
     commits = await repoLog(repo, `${base}..${head}`, 200);
   }
   return { base, head, stat, diff, commits, merged };
@@ -326,8 +327,9 @@ const server = http.createServer(async (req, res) => {
       if (sub === 'diff' && req.method === 'GET') {
         const base = u.searchParams.get('base'); const head = u.searchParams.get('head');
         const merged = u.searchParams.get('merged') === '1';
+        const twoDot = u.searchParams.get('twoDot') === '1';
         if (!base || !head) return send(res, 400, { error: 'base/head required' });
-        return send(res, 200, await repoDiff(r2, base, head, { merged }));
+        return send(res, 200, await repoDiff(r2, base, head, { merged, twoDot }));
       }
       if (sub === 'merge' && req.method === 'POST') {
         const b = await readBody(req);
