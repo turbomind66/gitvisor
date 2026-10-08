@@ -86,6 +86,14 @@
   .fst-R{background:#a371f733;color:#a371f7}
   .fst-C{background:#58a6ff33;color:#58a6ff}
   .filediff{margin-top:6px}
+.graphwrap { max-height: 70vh; overflow: auto; padding: 10px; }
+.graphsvg { display: block; }
+.gnode, .gnode circle { cursor: pointer; }
+.gnode circle { fill: #2f81f7; stroke: #0d1117; stroke-width: 1.5; }
+.gnode text { fill: #c9d1d9; font-size: 12px; dominant-baseline: middle; }
+.gedge { stroke: #444c56; stroke-width: 1.5; fill: none; }
+.gref { fill: #db61a2; font-size: 11px; }
+.graphrow:hover { background: #161b22; }
 </style>
 </head>
 <body>
@@ -224,6 +232,7 @@ function renderDetail(){
       <button data-act="tags">标签</button>
       <button data-act="compare">对比</button>
       <button data-act="history">全部提交</button>
+      <button data-act="graph">网络</button>
     </div>
     <div class="repometa mono">${esc(d.path)}</div>
     <table>
@@ -238,6 +247,7 @@ function renderDetail(){
     if(act==='compare') btn.onclick=openCompare;
     if(act==='newbranch') btn.onclick=openBranchModal;
     if(act==='tags') btn.onclick=openTags;
+    if(act==='graph') btn.onclick=()=>openGraph(d.id);
   });
 }
 async function openReview(base, head, opts = {}){
@@ -347,6 +357,52 @@ async function loadFileDiff(file){
     const r = await api(`/api/repo/${d.id}/filediff?base=${encodeURIComponent(ctx.base)}&head=${encodeURIComponent(ctx.head)}&file=${encodeURIComponent(file)}&twoDot=${ctx.twoDot?1:0}`);
     box.innerHTML = r.diff ? `<div class="diffbox">${renderDiff(r.diff)}</div>` : '<div class="muted">该文件无差异</div>';
   }catch(e){ box.innerHTML='<div class="err">加载失败：'+esc(e.message)+'</div>'; }
+}
+async function openGraph(id){
+  const box = $('#graphBox'); box.innerHTML='<div class="muted">加载中…</div>';
+  const data = await api(`/api/repo/${id}/graph?all=1`);
+  const { commitLane, laneCount } = layoutGraph(data.commits);
+  const rowH = 30, colW = 18, rr = 5, padL = 12, padT = 12;
+  const width = padL*2 + laneCount*colW + 40;
+  const height = padT*2 + data.commits.length*rowH;
+  let svg = `<svg class="graphsvg" width="${width}" height="${height}">`;
+  data.commits.forEach((c, i) => {
+    const y = padT + i*rowH + rowH/2;
+    const x = padL + commitLane[c.hash]*colW;
+    c.parents.forEach(p => {
+      const pi = data.commits.findIndex(x => x.hash === p);
+      if (pi < 0) return;
+      const py = padT + pi*rowH + rowH/2;
+      const px = padL + (commitLane[p]||0)*colW;
+      if (px === x) svg += `<line class="gedge" x1="${x}" y1="${y}" x2="${px}" y2="${py}"/>`;
+      else svg += `<path class="gedge" d="M${x} ${y} L${x} ${(y+py)/2} L${px} ${(y+py)/2} L${px} ${py}"/>`;
+    });
+  });
+  data.commits.forEach((c, i) => {
+    const y = padT + i*rowH + rowH/2;
+    const x = padL + commitLane[c.hash]*colW;
+    const refTxt = (data.refs[c.hash]||[]).map(r=>`<tspan class="gref"> ${esc(r)}</tspan>`).join('');
+    svg += `<g class="gnode" data-hash="${esc(c.hash)}" onclick="document.getElementById('graphDlg').close();openCommit('${c.hash}')"><circle cx="${x}" cy="${y}" r="${rr}"/><text x="${x + 12}" y="${y}">${esc(c.subject)}${refTxt}</text></g>`;
+  });
+  svg += '</svg>';
+  box.innerHTML = `<div class="graphrow">${svg}</div>`;
+  $('#graphDlg').showModal();
+}
+function layoutGraph(commits){
+  // commits: newest-first. Process oldest-first so each commit can sit on
+  // a lane belonging to one of its (already-seen) parents.
+  const rev = commits.slice().reverse();
+  const lanes = [];            // lanes[k] = newest commit hash placed in lane k
+  const commitLane = {};
+  for (const x of rev) {
+    const p0 = x.parents && x.parents[0];
+    let lane;
+    if (p0 && commitLane[p0] !== undefined) lane = commitLane[p0];
+    else { lane = lanes.findIndex(h => h == null); if (lane < 0){ lane = lanes.length; lanes.push(null); } }
+    commitLane[x.hash] = lane;
+    lanes[lane] = x.hash;
+  }
+  return { commitLane, laneCount: lanes.length };
 }
 async function openCommit(hash){
   const d=state.detail;
@@ -536,5 +592,12 @@ async function doCherry(){
   }catch(e){ $('#cherryErr').textContent='挑选失败：'+e.message; }
 }
 </script>
+<dialog id="graphDlg">
+  <div class="dlghead">
+    <h3>提交网络</h3>
+    <button class="x" onclick="document.getElementById('graphDlg').close()">×</button>
+  </div>
+  <div class="graphwrap"><div id="graphBox"></div></div>
+</dialog>
 </body>
 </html>

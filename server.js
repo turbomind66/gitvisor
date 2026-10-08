@@ -238,6 +238,31 @@ async function repoCommitDiff(repo, hash) {
   return { hash: H, short: h, author, when, refs, subject, stat, diff };
 }
 
+async function repoGraph(repo, opts = {}) {
+  const range = opts.all ? '--all' : (opts.ref || 'HEAD');
+  const out = await git(repo.path, ['log', range, '--date-order', '--pretty=format:%H%x1f%P%x1f%s']);
+  const commits = [];
+  for (const line of out.split('\n')) {
+    if (!line.trim()) continue;
+    const parts = line.split('\x1f');
+    const hash = parts[0];
+    const parents = parts[1] ? parts[1].split(' ').filter(Boolean) : [];
+    const subject = parts.slice(2).join('\x1f');
+    commits.push({ hash, parents, subject });
+  }
+  let refs = {};
+  try {
+    const refOut = await git(repo.path, ['show-ref', '--heads', '--tags']);
+    for (const line of refOut.split('\n')) {
+      if (!line.trim()) continue;
+      const sp = line.trim().split(/\s+/);
+      const h = sp[0];
+      const name = sp[1].replace(/^refs\/(heads|tags)\//, '');
+      (refs[h] = refs[h] || []).push(name);
+    }
+  } catch {}
+  return { commits, refs };
+}
 async function repoCherryPick(repo, target, hash) {
   if (!target) throw new Error('目标分支必填');
   if (!hash) throw new Error('提交必填');
@@ -403,6 +428,10 @@ const server = http.createServer(async (req, res) => {
         const hash = u.searchParams.get('hash');
         if (!hash) return send(res, 400, { error: 'hash required' });
         return send(res, 200, await repoCommitDiff(r2, hash));
+      }
+      if (sub === 'graph' && req.method === 'GET') {
+        const all = u.searchParams.get('all') !== '0';
+        return send(res, 200, await repoGraph(r2, { all }));
       }
       if (sub === 'cherry-pick' && req.method === 'POST') {
         const b = await readBody(req);
