@@ -94,6 +94,8 @@
 .gedge { stroke: #444c56; stroke-width: 1.5; fill: none; }
 .gref { fill: #db61a2; font-size: 11px; }
 .graphrow:hover { background: #161b22; }
+.dlg-foot{display:flex;align-items:center;gap:8px;padding:10px 16px;border-top:1px solid var(--border);background:var(--panel);}
+.dlg-foot .muted{font-size:12px}
 </style>
 </head>
 <body>
@@ -126,6 +128,12 @@
     <button id="closeBtn">关闭</button>
   </div>
   <div class="dlg-body" id="dlgBody"></div>
+  <div class="dlg-foot" id="dlgFoot" style="display:none">
+    <span class="muted">导出</span>
+    <button data-export="diff">导出 diff (.diff)</button>
+    <button data-export="patch">导出 patch (.patch)</button>
+    <span class="grow"></span>
+  </div>
 </dialog>
 
 <dialog id="branchDlg">
@@ -250,6 +258,21 @@ function renderDetail(){
     if(act==='graph') btn.onclick=()=>openGraph(d.id);
   });
 }
+function downloadText(filename, text){
+  const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+}
+async function exportPatch(mode){
+  const ctx = state.diffCtx; if(!ctx) return;
+  let u = `/api/repo/${state.detail.id}/export?mode=${mode}`;
+  if (mode === 'commit') u += `&hash=${encodeURIComponent(ctx.head)}`;
+  else u += `&base=${encodeURIComponent(ctx.base)}&head=${encodeURIComponent(ctx.head)}&twoDot=${ctx.twoDot ? 1 : 0}`;
+  const text = await (await fetch(u)).text();
+  const fn = mode === 'diff' ? `${(ctx.head||'export').slice(0,12)}.diff` : `${(ctx.head||'export').slice(0,12)}.patch`;
+  downloadText(fn, text);
+}
 async function openReview(base, head, opts = {}){
   const d=state.detail;
   openArgs = { base, head, opts };
@@ -301,6 +324,7 @@ async function openReview(base, head, opts = {}){
       };
     });
   }
+  const ef = $('#dlgFoot'); if (ef) { if (ctx.base && ctx.head && !ctx.merged && !ctx.allHistory) { ef.style.display = 'flex'; ef.querySelectorAll('[data-export]').forEach(b => b.onclick = () => exportPatch(b.dataset.export)); } else { ef.style.display = 'none'; } }
   $('#dlg').showModal();
   $('#searchInput').style.display='';
   $('#searchInput').value='';
@@ -405,6 +429,7 @@ function layoutGraph(commits){
   return { commitLane, laneCount: lanes.length };
 }
 async function openCommit(hash){
+  $('#dlgFoot').style.display = 'none';
   const d=state.detail;
   let c;
   try { c = await api(`/api/repo/${d.id}/commit?hash=${encodeURIComponent(hash)}`); }

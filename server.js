@@ -263,6 +263,17 @@ async function repoGraph(repo, opts = {}) {
   } catch {}
   return { commits, refs };
 }
+async function repoExport(repo, mode, base, head, hash, twoDot) {
+  if (mode === 'commit') {
+    if (!hash) throw new Error('hash required');
+    return await git(repo.path, ['format-patch', '--no-color', '-1', '--stdout', hash]);
+  }
+  const sep = twoDot ? '..' : '...';
+  if (mode === 'format-patch') {
+    return await git(repo.path, ['format-patch', '--no-color', '--stdout', `${base}${twoDot ? '..' : '...'}${head}`]);
+  }
+  return await git(repo.path, ['diff', '--no-color', `${base}${sep}${head}`]);
+}
 async function repoCherryPick(repo, target, hash) {
   if (!target) throw new Error('目标分支必填');
   if (!hash) throw new Error('提交必填');
@@ -432,6 +443,15 @@ const server = http.createServer(async (req, res) => {
       if (sub === 'graph' && req.method === 'GET') {
         const all = u.searchParams.get('all') !== '0';
         return send(res, 200, await repoGraph(r2, { all }));
+      }
+      if (sub === 'export' && req.method === 'GET') {
+        const mode = u.searchParams.get('mode') || 'diff';
+        const base = u.searchParams.get('base'); const head = u.searchParams.get('head');
+        const hash = u.searchParams.get('hash'); const twoDot = u.searchParams.get('twoDot') === '1';
+        if (mode === 'commit') { if (!hash) return send(res, 400, { error: 'hash required' }); }
+        else if (!base || !head) return send(res, 400, { error: 'base/head required' });
+        const text = await repoExport(r2, mode, base, head, hash, twoDot);
+        return send(res, 200, text, 'text/plain; charset=utf-8');
       }
       if (sub === 'cherry-pick' && req.method === 'POST') {
         const b = await readBody(req);
