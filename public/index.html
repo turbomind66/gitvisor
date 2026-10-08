@@ -104,6 +104,29 @@
   <div class="dlg-body" id="dlgBody"></div>
 </dialog>
 
+<dialog id="branchDlg">
+  <div class="dlg-head">
+    <strong>新建分支</strong><span class="grow"></span>
+    <button id="branchClose">关闭</button>
+  </div>
+  <div class="dlg-body">
+    <div style="display:flex;flex-direction:column;gap:12px;max-width:420px">
+      <label>分支名<input id="branchName" class="mono" style="margin-top:4px;padding:6px 8px;background:var(--panel2);border:1px solid var(--border);border-radius:6px;color:var(--text);width:100%" placeholder="如 feature-x" /></label>
+      <label>从以下分支创建
+        <select id="branchFrom" style="margin-top:4px;padding:6px 8px;background:var(--panel2);border:1px solid var(--border);border-radius:6px;color:var(--text);width:100%"></select>
+      </label>
+      <label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="branchCheckout" /> 创建后切换到该分支（会改动工作区）</label>
+      <div><button class="primary" id="branchCreate">创建分支</button></div>
+      <div class="err" id="branchErr"></div>
+    </div>
+  </div>
+</dialog>
+
+<dialog id="tagDlg">
+  <div class="dlg-head"><strong>标签</strong><span class="grow"></span><button id="tagClose">关闭</button></div>
+  <div class="dlg-body" id="tagBody"></div>
+</dialog>
+
 <div class="toast" id="toast"></div>
 
 <script>
@@ -148,6 +171,7 @@ function branchPills(b){
 }
 function renderDetail(){
   const d=state.detail; if(!d) return;
+  const tags = state.tags||[];
   const rows = d.branches.map(b=>`
     <tr>
       <td class="mono branch">${esc(b.name)} ${branchPills(b)}</td>
@@ -166,7 +190,10 @@ function renderDetail(){
       <span class="pill ${d.bare?'':'base'}">${d.bare?'裸仓库':'普通仓库'}</span>
       ${d.current?`<span class="muted">当前分支: <b class="mono">${esc(d.current)}</b></span>`:''}
       ${d.dirty?'<span class="pill behind">有未提交改动</span>':''}
+      ${tags.length?`<span class="pill base">标签 ${tags.length}</span>`:''}
       <span class="grow"></span>
+      <button data-act="newbranch">新建分支</button>
+      <button data-act="tags">标签</button>
       <button data-act="history">全部提交</button>
     </div>
     <div class="repometa mono">${esc(d.path)}</div>
@@ -179,6 +206,7 @@ function renderDetail(){
     if(act==='review') btn.onclick=()=>openReview(btn.dataset.b);
     if(act==='del') btn.onclick=()=>delBranch(btn.dataset.b);
     if(act==='history') btn.onclick=()=>openReview(d.baseRef||d.current, true);
+    if(act==='newbranch') btn.onclick=openBranchModal;
   });
 }
 async function openReview(branch, allHistory=false){
@@ -276,6 +304,32 @@ $('#refreshBtn').onclick=()=>loadRepos();
 $('#closeBtn').onclick=()=>$('#dlg').close();
 $('#mergeBtn').onclick=doMerge;
 $('#revertMergeBtn').onclick=revertMerge;
+// ---- 新建分支 ----
+function openBranchModal(){
+  const d=state.detail; if(!d) return;
+  const sel=$('#branchFrom'); sel.innerHTML='';
+  d.branches.forEach(b=>{
+    const o=document.createElement('option'); o.value=b.name; o.textContent=b.name+(b.current?' (当前)':''); sel.appendChild(o);
+  });
+  if(d.baseRef) sel.value=d.baseRef;
+  $('#branchName').value=''; $('#branchErr').textContent='';
+  $('#branchDlg').showModal();
+}
+async function createBranch(){
+  const d=state.detail;
+  const name=$('#branchName').value.trim();
+  const from=$('#branchFrom').value;
+  const checkout=$('#branchCheckout').checked;
+  $('#branchErr').textContent='';
+  try{
+    await api(`/api/repo/${d.id}/branch`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,from,checkout})});
+    toast(`已创建分支 ${name}`,'ok');
+    $('#branchDlg').close(); await selectRepo(d.id);
+  }catch(e){ $('#branchErr').textContent='创建失败：'+e.message; }
+}
+
+$('#branchClose').onclick=()=>$('#branchDlg').close();
+$('#branchCreate').onclick=createBranch;
 loadRepos().catch(e=>toast('加载失败：'+e.message,'bad'));
 </script>
 </body>

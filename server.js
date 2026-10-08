@@ -171,6 +171,21 @@ async function repoDeleteBranch(repo, name) {
   return { ok: true, name };
 }
 
+async function repoCreateBranch(repo, name, from, checkout) {
+  const BAD = [' ', '~', '^', ':', '?', '*', '\\', '[', ']', '/'];
+  if (!name || BAD.some(c => name.includes(c))) throw new Error('分支名非法（不能含空格与 ~ ^ : ? * [ ] / 等字符）');
+  const exists = await git(repo.path, ['rev-parse', '--verify', `refs/heads/${name}`]).catch(() => null);
+  if (exists !== null) throw new Error('分支已存在');
+  const src = from || (await git(repo.path, ['rev-parse', '--abbrev-ref', 'HEAD'])).trim() || 'HEAD';
+  await git(repo.path, ['branch', name, src]);
+  let didCheckout = false;
+  if (checkout && !(await isBareRepo(repo.path))) {
+    await git(repo.path, ['checkout', name]);
+    didCheckout = true;
+  }
+  return { ok: true, name, from: src, checkout: didCheckout };
+}
+
 // 判断 maybe 是否是 of 的祖先（用于识别“已合并”）
 async function isAncestor(repoPath, maybe, of) {
   try { await git(repoPath, ['merge-base', '--is-ancestor', maybe, of]); return true; }
@@ -275,6 +290,11 @@ const server = http.createServer(async (req, res) => {
         const b = await readBody(req);
         if (!b.commit) return send(res, 400, { error: 'commit required' });
         return send(res, 200, await repoRevert(r2, b.commit, b.target, 'commit'));
+      }
+      if (sub === 'branch' && req.method === 'POST') {
+        const b = await readBody(req);
+        if (!b.name) return send(res, 400, { error: 'name required' });
+        return send(res, 200, await repoCreateBranch(r2, b.name, b.from, b.checkout));
       }
       return send(res, 404, { error: 'not found' });
     }
