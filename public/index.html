@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>GitVisor · 本地仓库控制台</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2128; --border:#30363d;
+    --text:#e6edf3; --muted:#8b949e; --accent:#2f81f7; --green:#3fb950;
+    --red:#f85149; --amber:#d29922; --purple:#a371f7;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font:14px/1.55 -apple-system,"Segoe UI",Roboto,"Microsoft YaHei",sans-serif;background:var(--bg);color:var(--text)}
+  a{color:var(--accent);text-decoration:none}
+  header{display:flex;align-items:center;gap:12px;padding:12px 20px;background:var(--panel);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:10}
+  header .logo{font-weight:700;font-size:16px;display:flex;align-items:center;gap:8px}
+  header .dot{width:10px;height:10px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green)}
+  header .sub{color:var(--muted);font-size:12px}
+  main{max-width:1180px;margin:0 auto;padding:18px}
+  .grid{display:grid;grid-template-columns:230px 1fr;gap:18px}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:8px}
+  .card h3{margin:0;padding:10px 14px;border-bottom:1px solid var(--border);font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px}
+  .repolist{list-style:none;margin:0;padding:6px}
+  .repolist li{padding:8px 12px;border-radius:6px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:6px}
+  .repolist li:hover{background:var(--panel2)}
+  .repolist li.active{background:#1f6feb22;border:1px solid #2f81f755}
+  .tag{font-size:11px;color:var(--muted);border:1px solid var(--border);border-radius:10px;padding:1px 7px}
+  .repometa{padding:12px 14px;color:var(--muted);font-size:12px;word-break:break-all}
+  button{font:inherit;cursor:pointer;border:1px solid var(--border);background:var(--panel2);color:var(--text);border-radius:6px;padding:5px 11px}
+  button:hover{border-color:#8b949e}
+  button.primary{background:var(--green);border-color:var(--green);color:#03230d;font-weight:600}
+  button.primary:hover{filter:brightness(1.08)}
+  button.danger{color:var(--red);border-color:#f8514966}
+  button:disabled{opacity:.45;cursor:not-allowed}
+  table{width:100%;border-collapse:collapse}
+  th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--border);vertical-align:middle}
+  th{color:var(--muted);font-size:12px;font-weight:500}
+  tr:last-child td{border-bottom:none}
+  .mono{font-family:"Cascadia Code",Consolas,"Courier New",monospace}
+  .pill{display:inline-block;font-size:11px;padding:1px 7px;border-radius:10px;border:1px solid var(--border);color:var(--muted);margin-left:6px}
+  .pill.current{color:var(--green);border-color:#3fb95066}
+  .pill.base{color:var(--accent);border-color:#2f81f766}
+  .pill.ahead{color:var(--green);border-color:#3fb95066}
+  .pill.behind{color:var(--amber);border-color:#d2992266}
+  .branch{font-weight:600}
+  .row-actions{display:flex;gap:6px;justify-content:flex-end}
+  .muted{color:var(--muted)}
+  .bar{display:flex;align-items:center;gap:8px;padding:12px 14px;flex-wrap:wrap;border-bottom:1px solid var(--border)}
+  .bar .grow{flex:1}
+  dialog{background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:10px;padding:0;width:min(1020px,94vw);max-height:88vh}
+  dialog::backdrop{background:#000a}
+  .dlg-head{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--bg)}
+  .dlg-head .grow{flex:1}
+  .dlg-body{padding:14px 16px;overflow:auto;max-height:74vh}
+  .commit{padding:8px 10px;border:1px solid var(--border);border-radius:6px;margin-bottom:8px;background:var(--panel)}
+  .commit .subj{font-weight:600}
+  .commit .meta{color:var(--muted);font-size:12px;margin-top:2px}
+  .diffbox{margin-top:10px;border:1px solid var(--border);border-radius:6px;overflow:auto;max-height:44vh;background:#0b0f14}
+  pre{margin:0;font-family:"Cascadia Code",Consolas,monospace;font-size:12px;line-height:1.5}
+  .d-line{white-space:pre;padding:0 10px}
+  .d-add{background:#2ea04326;color:#7ee787}
+  .d-del{background:#f8514926;color:#ffa198}
+  .d-hunk{background:#388bfd26;color:#79c0ff}
+  .d-file{color:var(--muted);border-top:1px solid var(--border);padding-top:4px;margin-top:4px;font-weight:600}
+  .d-meta{color:var(--muted)}
+  .empty{color:var(--muted);padding:26px;text-align:center}
+  .err{color:var(--red)}
+  .stat{margin:6px 0 10px;color:var(--muted);font-size:12px;white-space:pre-wrap}
+  .toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);background:var(--panel2);border:1px solid var(--border);padding:10px 18px;border-radius:8px;box-shadow:0 6px 24px #000a;opacity:0;transition:.25s;pointer-events:none}
+  .toast.show{opacity:1}
+  .toast.ok{border-color:#3fb95066}
+  .toast.bad{border-color:#f8514966}
+</style>
+</head>
+<body>
+<header>
+  <div class="logo"><span class="dot"></span>GitVisor</div>
+  <span class="sub">本地仓库控制台 · 不联网 · 不推送远程</span>
+  <span class="grow" style="flex:1"></span>
+  <button id="refreshBtn" title="重新扫描仓库目录">刷新</button>
+</header>
+
+<main>
+  <div class="grid">
+    <aside class="card">
+      <h3>仓库</h3>
+      <ul class="repolist" id="repolist"></ul>
+    </aside>
+    <section class="card" id="detail">
+      <div class="empty">选择左侧一个仓库查看分支与历史</div>
+    </section>
+  </div>
+</main>
+
+<dialog id="dlg">
+  <div class="dlg-head">
+    <strong id="dlgTitle">对比</strong>
+    <span class="grow"></span>
+    <button class="danger" id="revertMergeBtn" style="display:none">回退此合并</button>
+    <button class="primary" id="mergeBtn">合并到目标分支</button>
+    <button id="closeBtn">关闭</button>
+  </div>
+  <div class="dlg-body" id="dlgBody"></div>
+</dialog>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+let state = { repos:[], current:null, detail:null, diffCtx:null };
+
+function toast(msg, kind=''){ const t=$('#toast'); t.textContent=msg; t.className='toast show '+kind; setTimeout(()=>t.className='toast '+kind,2600); }
+async function api(url, opts){ const r=await fetch(url, opts); const j=await r.json().catch(()=>({})); if(!r.ok) throw new Error(j.error||('HTTP '+r.status)); return j; }
+function esc(s){ return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+async function loadRepos(){
+  const {repos} = await api('/api/repos');
+  state.repos = repos;
+  const ul = $('#repolist'); ul.innerHTML='';
+  if(!repos.length){ ul.innerHTML='<li class="muted">未发现仓库</li>'; }
+  repos.forEach(r=>{
+    const li=document.createElement('li');
+    li.innerHTML=`<span class="mono">${esc(r.name)}</span><span class="tag">仓库</span>`;
+    li.onclick=()=>selectRepo(r.id);
+    li.dataset.id=r.id;
+    ul.appendChild(li);
+  });
+  const deep = new URLSearchParams(location.search).get('repo');
+  if (deep && repos.some(r=>r.id===deep)) selectRepo(deep);
+  else if (repos[0]) selectRepo(repos[0].id);
+}
+async function selectRepo(id){
+  state.current=id;
+  try { history.replaceState(null,'', '?repo='+encodeURIComponent(id)); } catch {}
+  document.querySelectorAll('.repolist li').forEach(li=>li.classList.toggle('active', li.dataset.id===id));
+  const d = await api('/api/repo/'+encodeURIComponent(id));
+  state.detail=d; renderDetail();
+}
+function branchPills(b){
+  let s='';
+  if(b.current) s+='<span class="pill current">当前</span>';
+  if(b.base) s+='<span class="pill base">主干</span>';
+  else if(b.merged) s+='<span class="pill" style="border-color:#a371f766;color:#a371f7">已合并</span>';
+  if(b.ahead>0) s+=`<span class="pill ahead">领先 ${b.ahead}</span>`;
+  if(b.behind>0) s+=`<span class="pill behind">落后 ${b.behind}</span>`;
+  return s;
+}
+function renderDetail(){
+  const d=state.detail; if(!d) return;
+  const rows = d.branches.map(b=>`
+    <tr>
+      <td class="mono branch">${esc(b.name)} ${branchPills(b)}</td>
+      <td class="mono muted">${esc(b.hash)}</td>
+      <td>${esc(b.author)}</td>
+      <td class="muted">${esc(b.when)}</td>
+      <td class="muted">${esc(b.subject)}</td>
+      <td><div class="row-actions">
+        ${d.baseRef && b.name!==d.baseRef ? `<button data-act="review" data-b="${esc(b.name)}">审查</button>` : ''}
+        ${!b.current && !b.base ? `<button class="danger" data-act="del" data-b="${esc(b.name)}">删除</button>` : ''}
+      </div></td>
+    </tr>`).join('');
+  $('#detail').innerHTML = `
+    <div class="bar">
+      <strong class="mono">${esc(d.name)}</strong>
+      <span class="pill ${d.bare?'':'base'}">${d.bare?'裸仓库':'普通仓库'}</span>
+      ${d.current?`<span class="muted">当前分支: <b class="mono">${esc(d.current)}</b></span>`:''}
+      ${d.dirty?'<span class="pill behind">有未提交改动</span>':''}
+      <span class="grow"></span>
+      <button data-act="history">全部提交</button>
+    </div>
+    <div class="repometa mono">${esc(d.path)}</div>
+    <table>
+      <thead><tr><th>分支</th><th>最新</th><th>作者</th><th>时间</th><th>说明</th><th></th></tr></thead>
+      <tbody>${rows || '<tr><td colspan="6" class="empty">没有分支</td></tr>'}</tbody>
+    </table>`;
+  $('#detail').querySelectorAll('button[data-act]').forEach(btn=>{
+    const act=btn.dataset.act;
+    if(act==='review') btn.onclick=()=>openReview(btn.dataset.b);
+    if(act==='del') btn.onclick=()=>delBranch(btn.dataset.b);
+    if(act==='history') btn.onclick=()=>openReview(d.baseRef||d.current, true);
+  });
+}
+async function openReview(branch, allHistory=false){
+  const d=state.detail;
+  const base = d.baseRef;
+  if(!base){ toast('没有主干分支可对比','bad'); return; }
+  const bObj = d.branches.find(x=>x.name===branch);
+  const isMerged = !allHistory && bObj && bObj.merged;
+  let data, ctx;
+  if(isMerged){
+    data = await api(`/api/repo/${d.id}/diff?base=${encodeURIComponent(base)}&head=${encodeURIComponent(bObj.mergeCommit)}&merged=1`);
+    ctx = {base, head:branch, merged:true, mergeCommit:bObj.mergeCommit};
+  } else if(branch===base || allHistory){
+    const commits = (await api(`/api/repo/${d.id}/log?ref=${encodeURIComponent(base)}`)).commits;
+    data = {base, head:base, stat:'', diff:'', commits};
+    ctx = {base, head:base, merged:false, allHistory:true};
+  } else {
+    data = await api(`/api/repo/${d.id}/diff?base=${encodeURIComponent(base)}&head=${encodeURIComponent(branch)}`);
+    ctx = {base, head:branch, merged:false};
+  }
+  state.diffCtx = ctx;
+  $('#dlgTitle').innerHTML = isMerged
+    ? `已合并：<span class="mono">${esc(branch)}</span> → <span class="mono">${esc(base)}</span>`
+    : (allHistory ? `提交历史：<span class="mono">${esc(base)}</span>`
+       : `审查：<span class="mono">${esc(base)}</span> ← <span class="mono">${esc(branch)}</span>`);
+  $('#mergeBtn').style.display = (isMerged || allHistory) ? 'none' : '';
+  $('#mergeBtn').disabled = false;
+  $('#mergeBtn').textContent = `合并 ${branch} → ${base}`;
+  $('#revertMergeBtn').style.display = isMerged ? '' : 'none';
+  $('#revertMergeBtn').disabled = false;
+  const showRevertCommit = allHistory || isMerged;
+  const commits = (data.commits||[]).map(c=>
+    `<div class="commit"><div class="subj">${esc(c.subject)}</div>
+    <div class="meta mono">${esc(c.short)} · ${esc(c.author)} · ${esc(c.when)} ${c.refs?('· '+esc(c.refs)):''}
+      ${showRevertCommit?`<button class="danger" style="margin-left:8px" data-revert="${esc(c.hash)}">回退此提交</button>`:''}
+    </div></div>`).join('');
+  $('#dlgBody').innerHTML = `
+    ${isMerged?'<div class="stat">该分支已合并进主干，下方为其引入的改动。可“回退此合并”撤销。</div>':''}
+    ${data.stat?`<div class="stat mono">${esc(data.stat)}</div>`:(data.diff?'':'<div class="stat">（无差异）</div>')}
+    <div>${commits}</div>
+    ${data.diff?`<div class="diffbox">${renderDiff(data.diff)}</div>`:''}`;
+  $('#dlg').showModal();
+  $('#dlgBody').querySelectorAll('button[data-revert]').forEach(btn=>{ btn.onclick=()=>revertCommit(btn.dataset.revert); });
+}
+function renderDiff(text){
+  return text.split('\n').map(l=>{
+    let cls='d-line';
+    if(l.startsWith('diff --git')||l.startsWith('index ')||l.startsWith('--- ')||l.startsWith('+++ ')||l.startsWith('new file')||l.startsWith('deleted file')||l.startsWith('similarity')) cls+=' d-meta';
+    else if(l.startsWith('@@')) cls+=' d-hunk';
+    else if(l.startsWith('+')) cls+=' d-add';
+    else if(l.startsWith('-')) cls+=' d-del';
+    return `<div class="${cls}">${esc(l)||'&nbsp;'}</div>`;
+  }).join('');
+}
+async function doMerge(){
+  const d=state.detail; const ctx=state.diffCtx;
+  if(ctx.merged) return;
+  $('#mergeBtn').disabled=true;
+  try{
+    await api(`/api/repo/${d.id}/merge`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({source:ctx.head,target:ctx.base})});
+    toast(`已合并 ${ctx.head} → ${ctx.base}`,'ok');
+    $('#dlg').close(); await selectRepo(d.id);
+  }catch(e){ toast('合并失败：'+e.message,'bad'); }
+  finally{ $('#mergeBtn').disabled=false; }
+}
+async function revertMerge(){
+  const d=state.detail; const ctx=state.diffCtx;
+  if(!ctx.merged) return;
+  if(!confirm(`确定回退合并 ${ctx.head}？将生成一个反向提交（历史不丢失，主干回到合并前状态）。`)) return;
+  $('#revertMergeBtn').disabled=true;
+  try{
+    await api(`/api/repo/${d.id}/revert-merge`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({branch:ctx.head,target:ctx.base,mergeCommit:ctx.mergeCommit})});
+    toast(`已回退合并 ${ctx.head}（生成反向提交）`,'ok');
+    $('#dlg').close(); await selectRepo(d.id);
+  }catch(e){ toast('回退失败：'+e.message,'bad'); }
+  finally{ $('#revertMergeBtn').disabled=false; }
+}
+async function revertCommit(hash){
+  const d=state.detail; const ctx=state.diffCtx;
+  const target = ctx.base || d.baseRef;
+  if(!confirm(`确定回退提交 ${hash.slice(0,7)}？将生成一个反向提交（历史不丢失）。`)) return;
+  try{
+    await api(`/api/repo/${d.id}/revert-commit`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({commit:hash,target})});
+    toast('已回退该提交','ok');
+    $('#dlg').close(); await selectRepo(d.id);
+  }catch(e){ toast('回退失败：'+e.message,'bad'); }
+}
+async function delBranch(name){
+  if(!confirm(`确定删除分支 ${name}？该操作不可恢复。`)) return;
+  try{ await api(`/api/repo/${state.detail.id}/branch/delete`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})});
+    toast(`已删除分支 ${name}`,'ok'); await selectRepo(state.detail.id);
+  }catch(e){ toast('删除失败：'+e.message,'bad'); }
+}
+$('#refreshBtn').onclick=()=>loadRepos();
+$('#closeBtn').onclick=()=>$('#dlg').close();
+$('#mergeBtn').onclick=doMerge;
+$('#revertMergeBtn').onclick=revertMerge;
+loadRepos().catch(e=>toast('加载失败：'+e.message,'bad'));
+</script>
+</body>
+</html>

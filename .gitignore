@@ -1,0 +1,16 @@
+# 用户配置（含本地仓库路径，不入库）
+config.json
+
+# 扫描到的仓库（运行时数据，含嵌套 .git）
+repos/
+
+# 日志
+*.log
+
+# 测试 / 截图产物
+_test*.js
+preview*.png
+
+# 系统
+.DS_Store
+Thumbs.db
