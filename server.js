@@ -218,6 +218,30 @@ async function repoCommitDiff(repo, hash) {
   return { hash: H, short: h, author, when, refs, subject, stat, diff };
 }
 
+async function repoCherryPick(repo, target, hash) {
+  if (!target) throw new Error('目标分支必填');
+  if (!hash) throw new Error('提交必填');
+  const clean = (await git(repo.path, ['status', '--porcelain'])).trim();
+  if (clean) throw new Error('工作区有未提交改动，无法切换分支执行挑选');
+  const cur = (await git(repo.path, ['rev-parse', '--abbrev-ref', 'HEAD'])).trim();
+  if (cur !== target) await git(repo.path, ['checkout', '--quiet', target]);
+  try {
+    const raw = await git(repo.path, ['cat-file', '-p', hash]);
+    const parents = (raw.match(/^parent /gm) || []).length;
+    const args = ['cherry-pick'];
+    if (parents > 1) args.push('-m', '1');
+    args.push(hash);
+    await git(repo.path, args);
+  } catch (e) {
+    try { await git(repo.path, ['cherry-pick', '--abort']); } catch {}
+    if (cur !== target) { try { await git(repo.path, ['checkout', '--quiet', cur]); } catch {} }
+    throw new Error('挑选发生冲突或失败，已自动中止并还原：' + e.message);
+  }
+  const newHead = (await git(repo.path, ['rev-parse', target])).trim();
+  if (cur !== target) await git(repo.path, ['checkout', '--quiet', cur]);
+  return { ok: true, target, newHead };
+}
+
 // 判断 maybe 是否是 of 的祖先（用于识别“已合并”）
 async function isAncestor(repoPath, maybe, of) {
   try { await git(repoPath, ['merge-base', '--is-ancestor', maybe, of]); return true; }
@@ -346,6 +370,11 @@ const server = http.createServer(async (req, res) => {
         const hash = u.searchParams.get('hash');
         if (!hash) return send(res, 400, { error: 'hash required' });
         return send(res, 200, await repoCommitDiff(r2, hash));
+      }
+      if (sub === 'cherry-pick' && req.method === 'POST') {
+        const b = await readBody(req);
+        if (!b.target || !b.hash) return send(res, 400, { error: 'target and hash required' });
+        return send(res, 200, await repoCherryPick(r2, b.target, b.hash));
       }
       return send(res, 404, { error: 'not found' });
     }

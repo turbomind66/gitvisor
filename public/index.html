@@ -128,6 +128,11 @@
   <div class="dlg-body" id="tagBody"></div>
 </dialog>
 
+<dialog id="cherryDlg">
+  <div class="dlg-head"><strong>挑选提交到分支</strong><span style="flex:1"></span><button id="cherryClose">关闭</button></div>
+  <div class="dlg-body" id="cherryBody"></div>
+</dialog>
+
 <div class="toast" id="toast"></div>
 
 <script>
@@ -273,6 +278,7 @@ async function openCommit(hash){
     <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
       <button id="backBtn">← 返回</button>
       <span style="flex:1"></span>
+      <button data-cherry="${esc(c.hash)}">挑选到目标分支</button>
       <button class="danger" data-revert="${esc(c.hash)}">回退此提交</button>
     </div>
     <div class="stat mono">${esc(c.author)} · ${esc(c.when)} ${c.refs?('· '+esc(c.refs)):''}</div>
@@ -282,6 +288,7 @@ async function openCommit(hash){
   $('#dlg').showModal();
   $('#backBtn').onclick=()=>openReview(openArgs.branch, openArgs.allHistory);
   $('#dlgBody').querySelector('button[data-revert]').onclick=()=>revertCommit(c.hash);
+  $('#dlgBody').querySelector('button[data-cherry]').onclick=()=>openCherry(c.hash);
 }
 
 function renderDiff(text){
@@ -415,7 +422,35 @@ async function deleteTag(name){
 $('#branchClose').onclick=()=>$('#branchDlg').close();
 $('#branchCreate').onclick=createBranch;
 $('#tagClose').onclick=()=>$('#tagDlg').close();
+$('#cherryClose').onclick=()=>$('#cherryDlg').close();
 loadRepos().catch(e=>toast('加载失败：'+e.message,'bad'));
+
+// ---- 挑选提交（cherry-pick） ----
+let cherryHash = null;
+async function openCherry(hash){
+  const d=state.detail; if(!d) return;
+  cherryHash = hash;
+  const opts = (d.branches||[]).map(b=>`<option value="${esc(b.name)}">${esc(b.name)}${b.current?'（当前）':''}</option>`).join('');
+  $('#cherryBody').innerHTML = `
+    <p class="muted">将提交 <span class="mono">${esc(hash.slice(0,7))}</span> 挑选到目标分支（生成一个新的提交，不改动原分支）：</p>
+    <div style="display:flex;gap:8px;align-items:center;margin:10px 0">
+      <select id="cherryTarget" style="padding:6px 8px;background:var(--panel2);border:1px solid var(--border);border-radius:6px;color:var(--text)">${opts}</select>
+    </div>
+    <div><button class="primary" id="cherryGo">确认挑选</button> <span class="err" id="cherryErr"></span></div>`;
+  const sel=$('#cherryTarget'); if(d.baseRef) sel.value=d.baseRef;
+  $('#cherryGo').onclick=doCherry;
+  $('#cherryDlg').showModal();
+}
+async function doCherry(){
+  const d=state.detail;
+  const target=$('#cherryTarget').value;
+  $('#cherryErr').textContent='';
+  try{
+    await api(`/api/repo/${d.id}/cherry-pick`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({target,hash:cherryHash})});
+    toast(`已挑选提交到 ${target}`,'ok');
+    $('#cherryDlg').close(); await selectRepo(d.id);
+  }catch(e){ $('#cherryErr').textContent='挑选失败：'+e.message; }
+}
 </script>
 </body>
 </html>
